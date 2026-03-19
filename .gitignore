@@ -1,0 +1,6 @@
+# Não subir a chave da Azure
+*.pem
+
+# Não subir senhas do Snowflake
+.env
+__pycache__/
