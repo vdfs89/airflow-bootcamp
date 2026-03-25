@@ -1,4 +1,4 @@
-# 🚗 NovaDrive: End-to-End Data Intelligence Pipeline (https://app.snowflake.com/streamlit/pdjgqtj/ov69368/#/apps/nwhqqzic3urfxrpbblvt)
+# 🚗 NovaDrive: End-to-End Data Intelligence Pipeline ([https://app.snowflake.com/streamlit/pdjgqtj/ov69368/#/apps/nwhqqzic3urfxrpbblvt](https://app.snowflake.com/streamlit/pdjgqtj/ov69368/#/apps/nwhqqzic3urfxrpbblvt))
 
 Este projeto documenta a construção de um pipeline de dados completo para a **NovaDrive**, uma concessionária de veículos de luxo. A solução abrange desde a orquestração em ambiente de nuvem (Azure) até a entrega de um dashboard executivo de alta performance no Snowflake, utilizando práticas de **Arquitetura de Medalhão** e **DevSecOps**.
 
