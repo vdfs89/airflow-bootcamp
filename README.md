@@ -310,6 +310,36 @@ Exemplo de variáveis para o dashboard:
 - SALES_API_BASE_URL
 - SALES_API_TIMEOUT
 
+### Deploy no Streamlit Cloud (Checklist de Emergência)
+
+1. O Streamlit Cloud não lê seu `.env` local.
+2. Configure segredos em `Settings > Secrets` no painel do app.
+3. Se nao for subir arquivo DuckDB para o GitHub (recomendado), habilite fallback:
+  - `NOVADRIVE_ENABLE_PROD_FALLBACK=true`
+  - bloco `[postgres]` em secrets com host/database/user/password/port.
+4. Se for usar DuckDB em nuvem, o caminho em `app.novadrive_duckdb_path` precisa existir no deploy.
+5. Em caso de erro de build por dependencias, confirme uso de `psycopg2-binary` em `requirements.txt`.
+
+Exemplo minimo para Streamlit Cloud:
+
+```toml
+NOVADRIVE_ENABLE_PROD_FALLBACK = true
+NOVADRIVE_GOLD_TABLE = "refined_vendas_final"
+
+[app]
+novadrive_duckdb_path = "data/warehouse.duckdb"
+sales_api_base_url = "http://143.244.215.137:3002"
+sales_api_timeout = 10
+
+[postgres]
+host = "159.223.187.110"
+database = "novadrive"
+user = "etlreadonly"
+password = "<defina_no_secret_manager>"
+port = 5432
+sslmode = "require"
+```
+
 ---
 
 > **Nota sobre DevSecOps:** Este projeto utiliza práticas de segurança rigorosas, incluindo o uso de `.gitignore` para impedir o vazamento de segredos e permissões NTFS (`icacls`) para proteção de chaves privadas em ambiente Windows/WSL.

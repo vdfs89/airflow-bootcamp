@@ -7,3 +7,6 @@ __pycache__/
 
 # Não subir secrets do Streamlit
 .streamlit/secrets.toml
+
+# Não subir banco DuckDB local
+data/*.duckdb
