@@ -4,3 +4,6 @@
 # Não subir senhas do Snowflake
 .env
 __pycache__/
+
+# Não subir secrets do Streamlit
+.streamlit/secrets.toml
