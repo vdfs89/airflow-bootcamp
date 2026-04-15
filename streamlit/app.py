@@ -111,7 +111,18 @@ ENABLE_PROD_FALLBACK = read_app_setting(
     env_name="NOVADRIVE_ENABLE_PROD_FALLBACK",
     default="false",
 ).lower() in {"1", "true", "yes", "on"}
-GOLD_TABLE_NAME = read_setting("NOVADRIVE_GOLD_TABLE", "refined_vendas_final")
+GOLD_TABLE_NAME = read_app_setting(
+    key="novadrive_gold_table",
+    env_name="NOVADRIVE_GOLD_TABLE",
+    default="",
+)
+if not GOLD_TABLE_NAME:
+    GOLD_TABLE_NAME = read_secret_setting(
+        section="postgres",
+        key="novadrive_gold_table",
+        env_name="NOVADRIVE_GOLD_TABLE",
+        default="refined_vendas_final",
+    )
 SALES_API_PASS = read_secret_setting(
     section="sales_api",
     key="password",
@@ -174,6 +185,14 @@ def resolve_duckdb_path(path_value: str) -> Path:
 def load_data():
     resolved_duckdb_path = resolve_duckdb_path(DUCKDB_PATH)
     query = f"SELECT * FROM {GOLD_TABLE_NAME}"
+    source_fallback_query = """
+    SELECT
+        v.data_venda::timestamp AS data_venda,
+        v.valor_pago::numeric AS valor_venda,
+        COALESCE(vei.nome, 'VEICULO_' || v.id_veiculos::text) AS modelo_veiculo
+    FROM vendas v
+    LEFT JOIN veiculos vei ON vei.id_veiculos = v.id_veiculos
+    """
 
     if resolved_duckdb_path.exists():
         conn = get_connection(str(resolved_duckdb_path))
@@ -185,7 +204,13 @@ def load_data():
             try:
                 return pd.read_sql_query(query, production_engine)
             except (SQLAlchemyError, OSError, RuntimeError, ValueError):
-                pass
+                try:
+                    return pd.read_sql_query(
+                        source_fallback_query,
+                        production_engine,
+                    )
+                except (SQLAlchemyError, OSError, RuntimeError, ValueError):
+                    pass
 
     if ENABLE_PROD_FALLBACK:
         message = (
@@ -370,7 +395,12 @@ with c1:
         line_shape="spline",
         color_discrete_sequence=["#00d4ff"],
     )
-    fig_evolucao.update_layout(margin=dict(l=10, r=10, t=20, b=10))
+    fig_evolucao.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=10, r=10, t=20, b=10),
+    )
     st.plotly_chart(fig_evolucao, use_container_width=True)
 
 with c2:
@@ -388,7 +418,12 @@ with c2:
         color="valor_venda",
         color_continuous_scale="Viridis",
     )
-    fig_ranking.update_layout(margin=dict(l=10, r=10, t=20, b=10))
+    fig_ranking.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=10, r=10, t=20, b=10),
+    )
     st.plotly_chart(fig_ranking, use_container_width=True)
 
 st.divider()
