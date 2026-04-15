@@ -2,6 +2,8 @@
 
 Este projeto documenta a construção de um pipeline de dados completo para a **NovaDrive**, uma concessionária de veículos de luxo. A solução abrange desde a orquestração em ambiente de nuvem (Azure) até a entrega de um dashboard executivo de alta performance no Snowflake, utilizando práticas de **Arquitetura de Medalhão** e **DevSecOps**.
 
+> **Dashboard em Produção (Streamlit Cloud):** https://noradrive.streamlit.app/
+
 ## 🏗️ Arquitetura do Sistema
 
 O pipeline foi desenhado seguindo a filosofia de efemeridade e conteinerização, garantindo portabilidade e escalabilidade.
