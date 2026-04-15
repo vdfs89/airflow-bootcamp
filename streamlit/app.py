@@ -1,14 +1,17 @@
 import os
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote_plus
 
 import duckdb
 import pandas as pd
 import plotly.express as px
-import psycopg2
 import requests
 import streamlit as st
 from dotenv import load_dotenv
+from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
+from sqlalchemy.exc import SQLAlchemyError
 
 
 # Carrega variaveis locais do .env para execucao fora do Streamlit Cloud.
@@ -134,20 +137,23 @@ PROD_DB_SSLMODE = read_secret_setting(
 
 
 @st.cache_resource
-def get_production_conn() -> Optional[psycopg2.extensions.connection]:
+def get_production_engine() -> Optional[Engine]:
     if not (PROD_DB_HOST and PROD_DB_NAME and PROD_DB_USER and PROD_DB_PASS):
         return None
 
+    encoded_password = quote_plus(PROD_DB_PASS)
+    db_url = (
+        f"postgresql+psycopg2://{PROD_DB_USER}:{encoded_password}"
+        f"@{PROD_DB_HOST}:{PROD_DB_PORT}/{PROD_DB_NAME}"
+    )
+
     try:
-        return psycopg2.connect(
-            host=PROD_DB_HOST,
-            database=PROD_DB_NAME,
-            user=PROD_DB_USER,
-            password=PROD_DB_PASS,
-            port=PROD_DB_PORT,
-            sslmode=PROD_DB_SSLMODE,
+        return create_engine(
+            db_url,
+            connect_args={"sslmode": PROD_DB_SSLMODE},
+            pool_pre_ping=True,
         )
-    except psycopg2.Error as exc:
+    except SQLAlchemyError as exc:
         st.error(f"Erro ao conectar ao banco de produção: {exc}")
         return None
 
@@ -174,11 +180,11 @@ def load_data():
         return conn.execute(query).df()
 
     if ENABLE_PROD_FALLBACK:
-        production_conn = get_production_conn()
-        if production_conn is not None:
+        production_engine = get_production_engine()
+        if production_engine is not None:
             try:
-                return pd.read_sql_query(query, production_conn)
-            except (psycopg2.Error, OSError, RuntimeError, ValueError):
+                return pd.read_sql_query(query, production_engine)
+            except (SQLAlchemyError, OSError, RuntimeError, ValueError):
                 pass
 
     if ENABLE_PROD_FALLBACK:
@@ -426,15 +432,18 @@ with st.expander("Verificar integridade de uma venda por ID"):
 
 with st.sidebar.expander("🔌 Diagnóstico de Conectividade", expanded=False):
     if st.button("Testar conexão Postgres Produção"):
-        production_test_conn = get_production_conn()
-        if production_test_conn is not None:
-            st.success("Conexão com Postgres de produção validada.")
-            production_test_conn.close()
-        else:
+        production_engine = get_production_engine()
+        if production_engine is None:
             st.warning(
                 "Conexão indisponível. Verifique st.secrets[postgres] "
                 "ou variáveis SOURCE_DB_*."
             )
+        else:
+            try:
+                with production_engine.connect():
+                    st.success("Conexão com Postgres de produção validada.")
+            except SQLAlchemyError as exc:
+                st.error(f"Falha no teste de conexão: {exc}")
 
 st.caption(
     "Desenvolvido para o Bootcamp NovaDrive | "
