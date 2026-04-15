@@ -1,8 +1,11 @@
 import os
+from pathlib import Path
+from typing import Optional
 
 import duckdb
 import pandas as pd
 import plotly.express as px
+import psycopg2
 import requests
 import streamlit as st
 from dotenv import load_dotenv
@@ -21,6 +24,35 @@ def read_setting(name: str, default: str) -> str:
         pass
 
     return os.getenv(name, default)
+
+
+def read_secret_setting(
+    section: str,
+    key: str,
+    env_name: str,
+    default: str = "",
+) -> str:
+    try:
+        section_data = st.secrets[section]
+        value = section_data[key]
+        if value is not None:
+            return str(value)
+    except (AttributeError, KeyError, RuntimeError, TypeError):
+        pass
+
+    return os.getenv(env_name, default)
+
+
+def read_app_setting(key: str, env_name: str, default: str) -> str:
+    try:
+        app_section = st.secrets["app"]
+        value = app_section.get(key)
+        if value is not None:
+            return str(value)
+    except (AttributeError, KeyError, RuntimeError, TypeError):
+        pass
+
+    return os.getenv(env_name, default)
 
 
 st.set_page_config(
@@ -43,23 +75,97 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-DUCKDB_PATH = read_setting("NOVADRIVE_DUCKDB_PATH", "data/warehouse.duckdb")
-SALES_API_BASE_URL = read_setting(
-    "SALES_API_BASE_URL", "http://143.244.215.137:3002"
+BASE_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = BASE_DIR.parent
+
+DUCKDB_PATH = read_app_setting(
+    key="novadrive_duckdb_path",
+    env_name="NOVADRIVE_DUCKDB_PATH",
+    default="data/warehouse.duckdb",
 )
-SALES_API_TIMEOUT = int(read_setting("SALES_API_TIMEOUT", "10"))
+SALES_API_BASE_URL = read_app_setting(
+    key="sales_api_base_url",
+    env_name="SALES_API_BASE_URL",
+    default="http://143.244.215.137:3002",
+)
+SALES_API_TIMEOUT = int(
+    read_app_setting(
+        key="sales_api_timeout",
+        env_name="SALES_API_TIMEOUT",
+        default="10",
+    )
+)
+GOLD_TABLE_NAME = read_setting("NOVADRIVE_GOLD_TABLE", "refined_vendas_final")
+SALES_API_PASS = read_secret_setting(
+    section="sales_api",
+    key="password",
+    env_name="SALES_API_PASSWORD",
+    default="",
+)
+
+PROD_DB_HOST = read_secret_setting("postgres", "host", "SOURCE_DB_HOST")
+PROD_DB_NAME = read_secret_setting("postgres", "database", "SOURCE_DB_NAME")
+PROD_DB_USER = read_secret_setting("postgres", "user", "SOURCE_DB_USER")
+PROD_DB_PASS = read_secret_setting(
+    "postgres", "password", "SOURCE_DB_PASSWORD"
+)
+PROD_DB_PORT = int(
+    read_secret_setting("postgres", "port", "SOURCE_DB_PORT", "5432")
+)
 
 
 @st.cache_resource
-def get_connection():
-    return duckdb.connect(database=DUCKDB_PATH, read_only=True)
+def get_production_conn() -> Optional[psycopg2.extensions.connection]:
+    if not (PROD_DB_HOST and PROD_DB_NAME and PROD_DB_USER and PROD_DB_PASS):
+        return None
+
+    try:
+        return psycopg2.connect(
+            host=PROD_DB_HOST,
+            database=PROD_DB_NAME,
+            user=PROD_DB_USER,
+            password=PROD_DB_PASS,
+            port=PROD_DB_PORT,
+        )
+    except psycopg2.Error as exc:
+        st.error(f"Erro ao conectar ao banco de produção: {exc}")
+        return None
+
+
+@st.cache_resource
+def get_connection(database_path: str):
+    return duckdb.connect(database=database_path, read_only=True)
+
+
+def resolve_duckdb_path(path_value: str) -> Path:
+    path = Path(path_value)
+    if path.is_absolute():
+        return path
+    return (PROJECT_ROOT / path).resolve()
 
 
 @st.cache_data(ttl=60)
 def load_data():
-    conn = get_connection()
-    query = "SELECT * FROM refined_vendas_final"
-    return conn.execute(query).df()
+    resolved_duckdb_path = resolve_duckdb_path(DUCKDB_PATH)
+    query = f"SELECT * FROM {GOLD_TABLE_NAME}"
+
+    if resolved_duckdb_path.exists():
+        conn = get_connection(str(resolved_duckdb_path))
+        return conn.execute(query).df()
+
+    production_conn = get_production_conn()
+    if production_conn is not None:
+        try:
+            return pd.read_sql_query(query, production_conn)
+        except Exception:
+            pass
+
+    message = (
+        "Fonte de dados indisponível. "
+        f"DuckDB não encontrado em: {resolved_duckdb_path}. "
+        "E não foi possível carregar a tabela Gold no Postgres de produção."
+    )
+    raise RuntimeError(message)
 
 
 def ensure_required_columns(dataframe: pd.DataFrame):
@@ -71,6 +177,38 @@ def ensure_required_columns(dataframe: pd.DataFrame):
             + ", ".join(sorted(missing))
         )
         st.stop()
+
+
+def show_data_source_help():
+    resolved_duckdb_path = resolve_duckdb_path(DUCKDB_PATH)
+    st.info(
+        "Configuração recomendada para corrigir este erro:\n"
+        "1. Defina NOVADRIVE_DUCKDB_PATH para um arquivo válido;\n"
+        "2. Ou configure st.secrets[postgres] e NOVADRIVE_GOLD_TABLE "
+        "para leitura da camada Gold no Postgres."
+    )
+    st.code(
+        "\n".join(
+            [
+                "[app]",
+                'novadrive_duckdb_path = "data/warehouse.duckdb"',
+                'sales_api_base_url = "http://143.244.215.137:3002"',
+                "sales_api_timeout = 10",
+                "",
+                "[postgres]",
+                'host = "<host>"',
+                'database = "<database>"',
+                'user = "<user>"',
+                'password = "<password>"',
+                "port = 5432",
+                "",
+                "# opcional",
+                'NOVADRIVE_GOLD_TABLE = "refined_vendas_final"',
+                f"# caminho atual resolvido: {resolved_duckdb_path}",
+            ]
+        ),
+        language="toml",
+    )
 
 
 def format_currency_brl(value: float) -> str:
@@ -87,8 +225,9 @@ st.sidebar.header("⚙️ Filtros Estratégicos")
 try:
     df = load_data()
 except (duckdb.Error, OSError, RuntimeError) as exc:
-    st.error("Falha ao carregar dados do DuckDB.")
-    st.exception(exc)
+    st.error("Falha ao carregar dados para o dashboard.")
+    st.warning(str(exc))
+    show_data_source_help()
     st.stop()
 
 if df.empty:
@@ -218,9 +357,13 @@ with st.expander("Verificar integridade de uma venda por ID"):
             st.info("Digite um ID válido.")
         else:
             try:
+                request_params = {"id": venda_id}
+                if SALES_API_PASS:
+                    request_params["password"] = SALES_API_PASS
+
                 response = requests.get(
                     f"{SALES_API_BASE_URL}/procura",
-                    params={"id": venda_id},
+                    params=request_params,
                     timeout=SALES_API_TIMEOUT,
                 )
                 if response.status_code == 200:
@@ -243,6 +386,18 @@ with st.expander("Verificar integridade de uma venda por ID"):
                 st.warning(
                     "Não foi possível conectar ao sistema de vendas externo."
                 )
+
+with st.sidebar.expander("🔌 Diagnóstico de Conectividade", expanded=False):
+    if st.button("Testar conexão Postgres Produção"):
+        production_test_conn = get_production_conn()
+        if production_test_conn is not None:
+            st.success("Conexão com Postgres de produção validada.")
+            production_test_conn.close()
+        else:
+            st.warning(
+                "Conexão indisponível. Verifique st.secrets[postgres] "
+                "ou variáveis SOURCE_DB_*."
+            )
 
 st.caption(
     "Desenvolvido para o Bootcamp NovaDrive | "

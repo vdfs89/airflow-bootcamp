@@ -290,6 +290,20 @@ O app foi preparado para ler na seguinte ordem:
 1. st.secrets (quando existir)
 2. Variáveis de ambiente carregadas do .env
 
+Exemplo de `.streamlit/secrets.toml`:
+
+```toml
+[postgres]
+host = "159.223.187.110"
+database = "novadrive"
+user = "etlreadonly"
+password = "<defina_no_secret_manager>"
+port = 5432
+
+[sales_api]
+password = "<defina_no_secret_manager>"
+```
+
 Exemplo de variáveis para o dashboard:
 
 - NOVADRIVE_DUCKDB_PATH
