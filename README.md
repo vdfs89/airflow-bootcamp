@@ -265,6 +265,9 @@ DuckDB local (opcional):
   ```bash
   pip install -r requirements.txt
   ```
+  Este arquivo na raiz contém apenas dependências do dashboard Streamlit.
+  As dependências do Airflow ficam em `requirements-airflow.txt` e são
+  instaladas no build do container.
 2. Garanta que o arquivo DuckDB exista (padrão): `data/warehouse.duckdb`.
 3. (Opcional) Configure variáveis para customizar o app:
   - `NOVADRIVE_DUCKDB_PATH`
