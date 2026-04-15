@@ -43,6 +43,14 @@ def read_secret_setting(
     return os.getenv(env_name, default)
 
 
+def read_env_setting(names: list[str], default: str = "") -> str:
+    for name in names:
+        value = os.getenv(name)
+        if value:
+            return value
+    return default
+
+
 def read_app_setting(key: str, env_name: str, default: str) -> str:
     try:
         app_section = st.secrets["app"]
@@ -95,6 +103,11 @@ SALES_API_TIMEOUT = int(
         default="10",
     )
 )
+ENABLE_PROD_FALLBACK = read_app_setting(
+    key="enable_production_fallback",
+    env_name="NOVADRIVE_ENABLE_PROD_FALLBACK",
+    default="false",
+).lower() in {"1", "true", "yes", "on"}
 GOLD_TABLE_NAME = read_setting("NOVADRIVE_GOLD_TABLE", "refined_vendas_final")
 SALES_API_PASS = read_secret_setting(
     section="sales_api",
@@ -109,8 +122,14 @@ PROD_DB_USER = read_secret_setting("postgres", "user", "SOURCE_DB_USER")
 PROD_DB_PASS = read_secret_setting(
     "postgres", "password", "SOURCE_DB_PASSWORD"
 )
+if not PROD_DB_PASS:
+    PROD_DB_PASS = read_env_setting(["SOURCE_DB_PASSWORD", "SOURCE_DB_PASS"])
+
 PROD_DB_PORT = int(
     read_secret_setting("postgres", "port", "SOURCE_DB_PORT", "5432")
+)
+PROD_DB_SSLMODE = read_secret_setting(
+    "postgres", "sslmode", "SOURCE_DB_SSLMODE", "require"
 )
 
 
@@ -126,6 +145,7 @@ def get_production_conn() -> Optional[psycopg2.extensions.connection]:
             user=PROD_DB_USER,
             password=PROD_DB_PASS,
             port=PROD_DB_PORT,
+            sslmode=PROD_DB_SSLMODE,
         )
     except psycopg2.Error as exc:
         st.error(f"Erro ao conectar ao banco de produção: {exc}")
@@ -153,18 +173,29 @@ def load_data():
         conn = get_connection(str(resolved_duckdb_path))
         return conn.execute(query).df()
 
-    production_conn = get_production_conn()
-    if production_conn is not None:
-        try:
-            return pd.read_sql_query(query, production_conn)
-        except Exception:
-            pass
+    if ENABLE_PROD_FALLBACK:
+        production_conn = get_production_conn()
+        if production_conn is not None:
+            try:
+                return pd.read_sql_query(query, production_conn)
+            except (psycopg2.Error, OSError, RuntimeError, ValueError):
+                pass
 
-    message = (
-        "Fonte de dados indisponível. "
-        f"DuckDB não encontrado em: {resolved_duckdb_path}. "
-        "E não foi possível carregar a tabela Gold no Postgres de produção."
-    )
+    if ENABLE_PROD_FALLBACK:
+        message = (
+            "Fonte de dados indisponível. "
+            f"DuckDB não encontrado em: {resolved_duckdb_path}. "
+            "E não foi possível carregar a tabela Gold no "
+            "Postgres de produção."
+        )
+    else:
+        message = (
+            "Fonte de dados indisponível no modo local. "
+            f"DuckDB não encontrado em: {resolved_duckdb_path}. "
+            "Crie o arquivo local ou ajuste NOVADRIVE_DUCKDB_PATH. "
+            "Se quiser fallback no banco de produção, defina "
+            "NOVADRIVE_ENABLE_PROD_FALLBACK=true."
+        )
     raise RuntimeError(message)
 
 
@@ -184,8 +215,9 @@ def show_data_source_help():
     st.info(
         "Configuração recomendada para corrigir este erro:\n"
         "1. Defina NOVADRIVE_DUCKDB_PATH para um arquivo válido;\n"
-        "2. Ou configure st.secrets[postgres] e NOVADRIVE_GOLD_TABLE "
-        "para leitura da camada Gold no Postgres."
+        "2. Para fallback no Postgres de produção, habilite "
+        "NOVADRIVE_ENABLE_PROD_FALLBACK=true e configure "
+        "st.secrets[postgres]."
     )
     st.code(
         "\n".join(
@@ -194,6 +226,7 @@ def show_data_source_help():
                 'novadrive_duckdb_path = "data/warehouse.duckdb"',
                 'sales_api_base_url = "http://143.244.215.137:3002"',
                 "sales_api_timeout = 10",
+                "enable_production_fallback = false",
                 "",
                 "[postgres]",
                 'host = "<host>"',
@@ -257,10 +290,14 @@ period = st.sidebar.date_input(
 )
 
 if isinstance(period, tuple) and len(period) == 2:
-    start_date, end_date = period
+    start_date = period[0]
+    end_date = period[1]
+elif isinstance(period, list) and len(period) == 2:
+    start_date = period[0]
+    end_date = period[1]
 else:
-    start_date = period
-    end_date = period
+    start_date = min_date
+    end_date = max_date
 
 model_options = sorted(df["modelo_veiculo"].dropna().unique().tolist())
 if len(model_options) >= 3:
